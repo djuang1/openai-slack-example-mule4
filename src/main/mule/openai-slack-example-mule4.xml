@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:openai="http://www.mulesoft.org/schema/mule/openai" xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xmlns:tls="http://www.mulesoft.org/schema/mule/tls"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:slack="http://www.mulesoft.org/schema/mule/slack" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/slack http://www.mulesoft.org/schema/mule/slack/current/mule-slack.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/tls http://www.mulesoft.org/schema/mule/tls/current/mule-tls.xsd
+http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+http://www.mulesoft.org/schema/mule/openai http://www.mulesoft.org/schema/mule/openai/current/mule-openai.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="12670134-249c-41f7-87aa-410d102754b5" >
+		<http:listener-connection host="0.0.0.0" port="8082" protocol="HTTPS">
+			<tls:context >
+				<tls:key-store type="jks" path="keystore.jks" alias="mule" keyPassword="password" password="password" />
+			</tls:context>
+		</http:listener-connection>
+	</http:listener-config>
+	<slack:config name="Slack_Connector_Config" doc:name="Slack Connector Config" doc:id="cf2f7f8f-edcd-4b60-bb8a-30851948cb71" >
+		<slack:slack-auth-connection >
+			<slack:oauth-authorization-code consumerKey="${slack.consumerKey}" consumerSecret="${slack.consumerSecret}" scopes="${slack.scopes}" resourceOwnerId="openAi"/>
+			<slack:oauth-callback-config listenerConfig="HTTP_Listener_config" callbackPath="/callback" authorizePath="/authorize" externalCallbackUrl="https://127.0.0.1:8082/callback"/>
+			<slack:oauth-store-config objectStore="tokenStore" />
+		</slack:slack-auth-connection>
+	</slack:config>
+	
+    <os:config name="ObjectStore_Config" doc:name="ObjectStore Config" doc:id="84fd6770-a0ae-4a7b-add8-dd18c4b0e902" />
+
+    <os:object-store name="tokenStore" config-ref="ObjectStore_Config" />
+	
+	<openai:config name="OpenAI_Config" doc:name="OpenAI Config" doc:id="4e205098-49e9-4903-8586-7941f3fc488d" >
+		<openai:connection apiKey="${openai.apikey}" />
+	</openai:config>
+	<configuration-properties doc:name="Configuration properties" doc:id="e2a23adf-0868-49d7-ac9a-77182b45c71f" file="mule-properties.yaml" />
+	<flow name="message-trigger" doc:id="7455c7a1-3b2e-477f-8b3c-03b511c2c827">
+		<slack:on-new-message-trigger doc:name="On new message trigger" doc:id="4e53bb11-1e4b-4fe6-bc0b-d247d2f2aeb8" config-ref="Slack_Connector_Config" channel="${slack.conversationId}" created="1677210347.245899" limit="5">
+			<scheduling-strategy >
+				<fixed-frequency frequency="5" timeUnit="SECONDS"/>
+			</scheduling-strategy>
+		</slack:on-new-message-trigger>
+		<choice doc:name="Choice" doc:id="08ac5947-aac1-40e0-80c5-8bae0455194c" >
+			<when expression='#[payload.bot_profile.name != "Demo App"]'>
+				<openai:create-completion doc:name="Create Completion" doc:id="bf01bb94-1700-44dc-ac8d-1ac0293b875b" config-ref="OpenAI_Config" model="text-davinci-003" prompt="#[payload.text]" maxTokens="#[1028]" temperature="0.8"/>
+				<ee:transform doc:name="Transform Message" doc:id="b2859b1c-654a-493c-9c4b-42106986d580">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	blocks: [
+		{
+			"type": "divider"
+		},
+		{
+			"type": "header",
+			"text": {
+				"type": "plain_text",
+				"text": "OpenAI Response",
+				"emoji": true
+			}
+		},
+		{
+			"type": "section",
+			"text": {
+				"type": "mrkdwn",
+				"text": "```" ++ trim(payload) ++ "```"
+			}
+		},
+		{
+			"type": "divider"
+		}
+	],
+	channel: p('slack.channel'),
+	text: payload
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+				<slack:create-chatpost-message doc:name="Send Message" doc:id="e93a61f7-2919-4b91-8a71-9c158fab4e0f" config-ref="Slack_Connector_Config" />
+			</when>
+			<otherwise >
+				<logger level="INFO" doc:name="Logger" doc:id="19de234d-e598-4960-89be-17a196415846" />
+			</otherwise>
+		</choice>
+	</flow>
+	<flow name="openai-slack-example-mule4Flow" doc:id="8e7a7e1c-185a-4226-aaf8-7e4d9549c67a" >
+		<http:listener doc:name="/send" doc:id="2517321d-479a-4b7c-9a1d-99d59309b459" config-ref="HTTP_Listener_config" path="/send"/>
+		<ee:transform doc:name="Transform Message" doc:id="de961a75-9266-446c-ba84-baece358b63d" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	channel: p('slack.channel'),
+	text: "Hello World!"
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<slack:create-chatpost-message doc:name="Send Message" doc:id="134ccadc-0c62-4509-b444-73888d4ad243" config-ref="Slack_Connector_Config"/>
+		<ee:transform doc:name="Transform Message" doc:id="ee08cc2c-01c5-4133-a7e7-17a777b1c6c9" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</flow>
+</mule>

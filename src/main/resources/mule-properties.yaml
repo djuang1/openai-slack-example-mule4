@@ -1,0 +1,9 @@
+openai:
+  apikey: ""
+
+slack:
+  consumerKey: ""
+  consumerSecret: ""
+  scopes: "channels:read chat:write:bot channels:history"
+  channel: ""
+  conversationId: ""
